@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-windows-startup-tray",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Start Obsidian with Windows and optionally keep each vault in the system tray.",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.7",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}
