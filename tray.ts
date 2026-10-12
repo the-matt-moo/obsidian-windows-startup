@@ -230,9 +230,9 @@ export class TrayController {
       this.renderer.removeEventListener('beforeunload', this.beforeUnloadHandler, { capture: true });
     }
     try { if (this.closeHandler) this.win.removeListener('close', this.closeHandler as Listener); } catch { /* Already removed. */ }
-    try { if (this.sessionHandler) this.win.removeListener('query-session-end', this.sessionHandler as Listener); } catch { /* Already removed. */ }
-    try { if (this.sessionHandler) this.win.removeListener('session-end', this.sessionHandler as Listener); } catch { /* Already removed. */ }
-    try { if (this.quitHandler) this.remote.app.removeListener('before-quit', this.quitHandler as Listener); } catch { /* Already removed. */ }
+    try { if (this.sessionHandler) this.win.removeListener('query-session-end', this.sessionHandler); } catch { /* Already removed. */ }
+    try { if (this.sessionHandler) this.win.removeListener('session-end', this.sessionHandler); } catch { /* Already removed. */ }
+    try { if (this.quitHandler) this.remote.app.removeListener('before-quit', this.quitHandler); } catch { /* Already removed. */ }
     this.beforeUnloadHandler = undefined;
     this.closeHandler = undefined;
     this.quitHandler = undefined;
@@ -266,7 +266,7 @@ export class TrayController {
           this.trackedWindows.delete(domWindow);
           continue;
         }
-        const electronWindow = this.electronWindowOf(domWindow as DomWindowLike);
+        const electronWindow = this.electronWindowOf(domWindow);
         if (!electronWindow || electronWindow.isDestroyed() || seen.has(electronWindow.id)) continue;
         seen.add(electronWindow.id);
         result.push(electronWindow);

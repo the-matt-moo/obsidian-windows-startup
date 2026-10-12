@@ -1,4 +1,4 @@
-# Windows Startup & Tray for Obsidian
+# Windows Startup and Tray
 
 Four Windows-only settings:
 
@@ -7,7 +7,18 @@ Four Windows-only settings:
 - **Start in tray:** hide a marked startup launch after the vault layout loads; this takes priority over minimized.
 - **Close to tray:** keep this vault running when its main window is closed.
 
-The per-vault tray has **Show / Hide** and **Quit this vault** controls. New tray options default off. The plugin has no npm runtime dependencies or bundled binaries. It uses Windows' built-in `reg.exe` only to read its own startup command. This is independent implementation informed by MIT-licensed [Background Tray](https://github.com/Synaphi/background-tray), not a fork.
+The per-vault tray has **Show / Hide** and **Quit this vault** controls. New tray options default off. The plugin has no npm runtime dependencies or bundled binaries. This is independent implementation informed by MIT-licensed [Background Tray](https://github.com/Synaphi/background-tray), not a fork.
+
+## System access
+
+This plugin uses two Node.js APIs that Obsidian flags as elevated access. Both are required and neither can be replaced by the Obsidian vault API.
+
+| API | What it does | Why it is necessary |
+|-----|-------------|---------------------|
+| `fs.existsSync` | Checks whether Obsidian's parent launcher exists on disk (one call at plugin load). | Squirrel-installed Obsidian has a versioned `app-X.Y.Z/` directory. The plugin must verify the stable parent launcher exists before using it as the startup executable; otherwise the startup entry would break after an Obsidian update. No file is read or written. |
+| `child_process.execFileSync` | Runs `reg.exe query` to read the plugin's own startup registry value (one call per settings-tab open or refresh). | Electron's `getLoginItemSettings` omits command-line switches from its return value. The only way to know whether `--obsidian-windows-startup-minimized` or `--obsidian-windows-startup-tray` is present in the current startup command is to read the plugin's own `HKCU\...\Run` value directly. `reg.exe` is invoked with `windowsHide: true`, targets only the named value `Obsidian Windows Startup`, and no shell is involved (`execFileSync`, not `exec`). |
+
+The plugin does not read, write, or enumerate any file or registry value beyond these two scoped operations. All four settings are written through Electron's `app.setLoginItemSettings` API, not through direct registry writes. Source is fully auditable and the release build reproduces byte-for-byte from the repository.
 
 ## Build
 
@@ -26,8 +37,8 @@ npm test
 1. Build the plugin.
 2. Create `<vault>/.obsidian/plugins/windows-startup/`.
 3. Copy **`manifest.json` and `main.js`** into that directory. No CSS file is needed.
-4. In Obsidian, allow community plugins and enable **Windows Startup & Tray**.
-5. Open **Settings → Windows Startup & Tray** and choose the four toggles.
+4. In Obsidian, allow community plugins and enable **Windows Startup and Tray**.
+5. Open **Settings → Windows Startup and Tray** and choose the four toggles.
 
 Windows startup is per Windows user, not per vault. Minimized and tray-start flags in an existing registry entry are authoritative; preferences and close-to-tray are saved in this vault's `data.json`. Multiple installed copies manage the same named entry. Startup opens the last-used vault, so keep the plugin enabled there for startup window behavior.
 
@@ -93,6 +104,8 @@ First disable other Obsidian autostart entries to avoid duplicate launches; this
 The automated suite covers registry arguments/state, one-time startup priority, tray failure safety, close interception, quit/session-end bypass, multi-window restoration, canceled Quit, and late async tray creation. Native Electron harnesses are documented in `VERIFICATION.md`.
 
 ## Limits and removal
+
+- **System access:** The plugin uses `fs.existsSync` (one path check at load) and `child_process.execFileSync` (reads one registry value via `reg.exe`). See [System access](#system-access) for full details.
 
 - Startup means **user login**, not a Windows service running before login.
 - A brief visible window is possible: a vault plugin cannot hide an Electron window before Obsidian loads plugins.

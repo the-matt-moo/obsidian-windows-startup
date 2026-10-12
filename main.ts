@@ -1,8 +1,8 @@
-import { App, Notice, Platform, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, Platform, Plugin, PluginSettingTab, Setting, type SettingDefinitionItem } from 'obsidian';
 import { existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import {
-  applyStartupWindow, LoginApp, MINIMIZED_ARG, STARTUP_ARG, StartupSession, StartupState,
+  applyStartupWindow, LoginApp, STARTUP_ARG, StartupSession, StartupState,
   StartupWindow, TRAY_ARG, WindowsStartup,
 } from './startup';
 import { ElectronWindowLike, TrayController, TrayRemote } from './tray';
@@ -20,9 +20,11 @@ interface SavedSettings {
 }
 
 function getRemote(): ElectronRemote {
-  let remote: ElectronRemote | undefined;
-  try { remote = require('@electron/remote'); } catch { /* Older Obsidian may expose electron.remote. */ }
-  if (!remote) remote = require('electron').remote;
+  // Electron runtime modules — static import is unavailable in Obsidian plugins.
+  const load = (id: string): unknown =>
+    (globalThis as unknown as { require?: (id: string) => unknown }).require?.(id);
+  let remote = load('@electron/remote') as ElectronRemote | undefined;
+  if (!remote) remote = (load('electron') as { remote?: ElectronRemote } | undefined)?.remote;
   if (!remote?.app?.getLoginItemSettings || !remote.app.setLoginItemSettings ||
     !remote.process?.execPath || !remote.getCurrentWindow ||
     !remote.app.commandLine?.hasSwitch || !remote.app.commandLine.removeSwitch) {
@@ -105,7 +107,7 @@ export default class WindowsStartupPlugin extends Plugin {
   }
 
   report(error: unknown): void {
-    new Notice(`Windows Startup & Tray: ${error instanceof Error ? error.message : String(error)}`, 10000);
+    new Notice(`Windows Startup and Tray: ${error instanceof Error ? error.message : String(error)}`, 10000);
   }
 
   private existingSecondaryWindows(): Window[] {
@@ -122,11 +124,117 @@ export default class WindowsStartupPlugin extends Plugin {
   }
 }
 
+type SettingKey = 'startWithWindows' | 'startMinimized' | 'startInTray' | 'closeToTray';
+
 class WindowsStartupSettings extends PluginSettingTab {
   private saving = false;
+  private cachedState: StartupState | undefined;
+  private stateError = '';
 
   constructor(app: App, private readonly plugin: WindowsStartupPlugin) { super(app, plugin); }
 
+  private readState(): void {
+    this.stateError = this.plugin.unavailable;
+    this.cachedState = undefined;
+    try { this.cachedState = this.plugin.startup?.read(this.plugin.preferredMinimized, this.plugin.preferredStartInTray); }
+    catch (cause) { this.stateError = cause instanceof Error ? cause.message : String(cause); }
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    this.readState();
+    return [
+      {
+        name: '',
+        render: (setting: Setting) => {
+          setting.settingEl.empty();
+          setting.settingEl.createEl('p', { text: 'Startup applies to this Windows user and opens Obsidian\u2019s last-used vault. Tray behavior belongs to this vault. Other startup entries are not managed.' });
+          if (this.stateError) setting.settingEl.createEl('p', { text: this.stateError });
+        },
+      },
+      {
+        name: 'Start with Windows',
+        desc: 'Start Obsidian when you sign in. Reads the actual Windows startup status, including Task Manager changes.',
+        control: { type: 'toggle' as const, key: 'startWithWindows' as SettingKey, disabled: () => !this.cachedState || this.saving },
+      },
+      {
+        name: 'Start minimized',
+        desc: 'Minimize to the taskbar after the startup vault loads. Start in tray takes priority when both are enabled.',
+        control: { type: 'toggle' as const, key: 'startMinimized' as SettingKey, disabled: () => !this.cachedState || this.saving },
+      },
+      {
+        name: 'Start in tray',
+        desc: 'On this plugin\u2019s marked Windows startup launch only, hide this vault after its layout loads. Ordinary launches stay visible.',
+        control: { type: 'toggle' as const, key: 'startInTray' as SettingKey, disabled: () => !this.cachedState || !this.plugin.tray || this.saving },
+      },
+      {
+        name: 'Close to tray',
+        desc: 'Keep this vault running when its main window is closed. Its tray menu can show/hide it or really close this vault.',
+        control: { type: 'toggle' as const, key: 'closeToTray' as SettingKey, disabled: () => !this.plugin.tray || this.saving },
+      },
+      {
+        name: 'Refresh Windows status',
+        desc: 'Refresh after changing Startup Apps or Task Manager while this tab is open.',
+        action: () => { this.readState(); this.update(); },
+      },
+    ];
+  }
+
+  getControlValue(key: string): unknown {
+    switch (key) {
+      case 'startWithWindows': return this.cachedState?.enabled ?? false;
+      case 'startMinimized': return this.cachedState?.minimized ?? this.plugin.preferredMinimized;
+      case 'startInTray': return this.cachedState?.tray ?? this.plugin.preferredStartInTray;
+      case 'closeToTray': return this.plugin.closeToTray;
+      default: return undefined;
+    }
+  }
+
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    const { plugin } = this;
+    const enabled = value === true;
+    this.saving = true;
+    this.refreshDomState();
+    try {
+      switch (key) {
+        case 'startWithWindows': {
+          if (!plugin.startup || !this.cachedState) return;
+          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
+          plugin.startup.write(enabled, enabled, current.minimized, current.tray);
+          break;
+        }
+        case 'startMinimized': {
+          if (!plugin.startup || !this.cachedState) return;
+          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
+          plugin.startup.write(current.registered, current.enabled, enabled, current.tray);
+          plugin.preferredMinimized = enabled;
+          await plugin.savePreferences();
+          break;
+        }
+        case 'startInTray': {
+          if (!plugin.startup || !this.cachedState) return;
+          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
+          plugin.startup.write(current.registered, current.enabled, current.minimized, enabled);
+          plugin.preferredStartInTray = enabled;
+          await plugin.savePreferences();
+          await plugin.refreshTray();
+          break;
+        }
+        case 'closeToTray': {
+          plugin.closeToTray = enabled;
+          await plugin.savePreferences();
+          await plugin.refreshTray();
+          break;
+        }
+      }
+    } catch (cause) { plugin.report(cause); }
+    finally {
+      this.saving = false;
+      this.readState();
+      this.update();
+    }
+  }
+
+  // Fallback for Obsidian < 1.13.0 — getSettingDefinitions() takes priority when available.
   display(): void {
     const { containerEl, plugin } = this;
     containerEl.empty();
