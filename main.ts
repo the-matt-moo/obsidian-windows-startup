@@ -1,4 +1,4 @@
-import { App, Notice, Platform, Plugin, PluginSettingTab, Setting, type SettingDefinitionItem } from 'obsidian';
+import { App, Notice, Platform, Plugin, PluginSettingTab, type Setting, type SettingDefinitionItem } from 'obsidian';
 import { existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import {
@@ -22,8 +22,10 @@ interface SavedSettings {
 function getRemote(): ElectronRemote {
   // Electron runtime modules — static import is unavailable in Obsidian plugins.
   const load = (id: string): unknown =>
-    (globalThis as unknown as { require?: (id: string) => unknown }).require?.(id);
-  let remote = load('@electron/remote') as ElectronRemote | undefined;
+    (window as unknown as { require?: (id: string) => unknown }).require?.(id);
+  let remote: ElectronRemote | undefined;
+  try { remote = load('@electron/remote') as ElectronRemote | undefined; }
+  catch { /* Older Electron may expose only electron.remote. */ }
   if (!remote) remote = (load('electron') as { remote?: ElectronRemote } | undefined)?.remote;
   if (!remote?.app?.getLoginItemSettings || !remote.app.setLoginItemSettings ||
     !remote.process?.execPath || !remote.getCurrentWindow ||
@@ -124,8 +126,6 @@ export default class WindowsStartupPlugin extends Plugin {
   }
 }
 
-type SettingKey = 'startWithWindows' | 'startMinimized' | 'startInTray' | 'closeToTray';
-
 class WindowsStartupSettings extends PluginSettingTab {
   private saving = false;
   private cachedState: StartupState | undefined;
@@ -147,34 +147,34 @@ class WindowsStartupSettings extends PluginSettingTab {
         name: '',
         render: (setting: Setting) => {
           setting.settingEl.empty();
-          setting.settingEl.createEl('p', { text: 'Startup applies to this Windows user and opens Obsidian\u2019s last-used vault. Tray behavior belongs to this vault. Other startup entries are not managed.' });
+          setting.settingEl.createEl('p', { text: 'Startup applies to this Windows user and opens Obsidian\u2019s last-used vault. Tray behavior belongs to this vault. Other startup entries are not managed. Startup detection uses fs to check the launcher path and reg.exe to read only this plugin’s startup value. Preferences are saved in this vault.' });
           if (this.stateError) setting.settingEl.createEl('p', { text: this.stateError });
         },
       },
       {
         name: 'Start with Windows',
         desc: 'Start Obsidian when you sign in. Reads the actual Windows startup status, including Task Manager changes.',
-        control: { type: 'toggle' as const, key: 'startWithWindows' as SettingKey, disabled: () => !this.cachedState || this.saving },
+        control: { type: 'toggle', key: 'startWithWindows', disabled: () => !this.cachedState || this.saving },
       },
       {
         name: 'Start minimized',
         desc: 'Minimize to the taskbar after the startup vault loads. Start in tray takes priority when both are enabled.',
-        control: { type: 'toggle' as const, key: 'startMinimized' as SettingKey, disabled: () => !this.cachedState || this.saving },
+        control: { type: 'toggle', key: 'startMinimized', disabled: () => !this.cachedState || this.saving },
       },
       {
         name: 'Start in tray',
         desc: 'On this plugin\u2019s marked Windows startup launch only, hide this vault after its layout loads. Ordinary launches stay visible.',
-        control: { type: 'toggle' as const, key: 'startInTray' as SettingKey, disabled: () => !this.cachedState || !this.plugin.tray || this.saving },
+        control: { type: 'toggle', key: 'startInTray', disabled: () => !this.cachedState || !this.plugin.tray || this.saving },
       },
       {
         name: 'Close to tray',
         desc: 'Keep this vault running when its main window is closed. Its tray menu can show/hide it or really close this vault.',
-        control: { type: 'toggle' as const, key: 'closeToTray' as SettingKey, disabled: () => !this.plugin.tray || this.saving },
+        control: { type: 'toggle', key: 'closeToTray', disabled: () => !this.plugin.tray || this.saving },
       },
       {
         name: 'Refresh Windows status',
         desc: 'Refresh after changing Startup Apps or Task Manager while this tab is open.',
-        action: () => { this.readState(); this.update(); },
+        action: () => this.update(),
       },
     ];
   }
@@ -229,84 +229,7 @@ class WindowsStartupSettings extends PluginSettingTab {
     } catch (cause) { plugin.report(cause); }
     finally {
       this.saving = false;
-      this.readState();
       this.update();
     }
-  }
-
-  // Fallback for Obsidian < 1.13.0 — getSettingDefinitions() takes priority when available.
-  display(): void {
-    const { containerEl, plugin } = this;
-    containerEl.empty();
-    containerEl.createEl('p', { text: 'Startup applies to this Windows user and opens Obsidian’s last-used vault. Tray behavior belongs to this vault. Other startup entries are not managed.' });
-    let state: StartupState | undefined;
-    let error = plugin.unavailable;
-    try { state = plugin.startup?.read(plugin.preferredMinimized, plugin.preferredStartInTray); }
-    catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
-    if (error) containerEl.createEl('p', { text: error });
-
-    new Setting(containerEl)
-      .setName('Start with Windows')
-      .setDesc('Start Obsidian when you sign in. Reads the actual Windows startup status, including Task Manager changes.')
-      .addToggle(toggle => toggle.setValue(state?.enabled ?? false).setDisabled(!state || this.saving).onChange(enabled => {
-        toggle.setDisabled(true);
-        try {
-          if (!plugin.startup || !state) return;
-          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
-          plugin.startup.write(enabled, enabled, current.minimized, current.tray);
-        } catch (cause) { plugin.report(cause); }
-        finally { this.display(); }
-      }));
-
-    new Setting(containerEl)
-      .setName('Start minimized')
-      .setDesc('Minimize to the taskbar after the startup vault loads. Start in tray takes priority when both are enabled.')
-      .addToggle(toggle => toggle.setValue(state?.minimized ?? plugin.preferredMinimized).setDisabled(!state || this.saving).onChange(async minimized => {
-        this.saving = true;
-        this.display();
-        try {
-          if (!plugin.startup || !state) return;
-          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
-          plugin.startup.write(current.registered, current.enabled, minimized, current.tray);
-          plugin.preferredMinimized = minimized;
-          await plugin.savePreferences();
-        } catch (cause) { plugin.report(cause); }
-        finally { this.saving = false; this.display(); }
-      }));
-
-    new Setting(containerEl)
-      .setName('Start in tray')
-      .setDesc('On this plugin’s marked Windows startup launch only, hide this vault after its layout loads. Ordinary launches stay visible.')
-      .addToggle(toggle => toggle.setValue(state?.tray ?? plugin.preferredStartInTray).setDisabled(!state || !plugin.tray || this.saving).onChange(async inTray => {
-        this.saving = true;
-        this.display();
-        try {
-          if (!plugin.startup || !state) return;
-          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
-          plugin.startup.write(current.registered, current.enabled, current.minimized, inTray);
-          plugin.preferredStartInTray = inTray;
-          await plugin.savePreferences();
-          await plugin.refreshTray();
-        } catch (cause) { plugin.report(cause); }
-        finally { this.saving = false; this.display(); }
-      }));
-
-    new Setting(containerEl)
-      .setName('Close to tray')
-      .setDesc('Keep this vault running when its main window is closed. Its tray menu can show/hide it or really close this vault.')
-      .addToggle(toggle => toggle.setValue(plugin.closeToTray).setDisabled(!plugin.tray || this.saving).onChange(async closeToTray => {
-        this.saving = true;
-        this.display();
-        try {
-          plugin.closeToTray = closeToTray;
-          await plugin.savePreferences();
-          await plugin.refreshTray();
-        } catch (cause) { plugin.report(cause); }
-        finally { this.saving = false; this.display(); }
-      }));
-
-    new Setting(containerEl).setName('Refresh Windows status')
-      .setDesc('Refresh after changing Startup Apps or Task Manager while this tab is open.')
-      .addButton(button => button.setButtonText('Refresh').onClick(() => this.display()));
   }
 }

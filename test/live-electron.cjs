@@ -92,12 +92,14 @@ async function stop() {
     window.controls={};
     const dataFile=pluginDir+'/data.json';
     class Plugin { constructor(){this.app={vault:{getName:()=> 'Disposable Vault'},workspace:{onLayoutReady:fn=>fn(),on:()=>({})}};} async loadData(){return fs.existsSync(dataFile)?JSON.parse(fs.readFileSync(dataFile,'utf8')):null;} async saveData(data){fs.writeFileSync(dataFile,JSON.stringify(data));} addSettingTab(tab){this.tab=tab;} registerEvent(){} }
-    class PluginSettingTab {constructor(app,plugin){this.containerEl={empty(){window.controls={};},createEl(){},querySelectorAll(){return[];}};} }
-    class Setting {setName(n){this.name=n;return this;}setDesc(){return this;}addToggle(fn){const control={setValue(v){this.value=v;return this;},setDisabled(){return this;},onChange(fn){this.change=fn;return this;}};window.controls[this.name]=control;fn(control);return this;}addButton(fn){fn({setButtonText(){return this;},onClick(){return this;}});return this;} }
+    class PluginSettingTab {
+     update(){window.controls={};for(const item of this.getSettingDefinitions())if(item.control?.type==='toggle')window.controls[item.name]={value:this.getControlValue(item.control.key),change:value=>this.setControlValue(item.control.key,value)};}
+     refreshDomState(){}
+    }
     window.notices=[];
     const original=Module._load;
-    Module._load=function(id,...args){if(id==='obsidian')return{Plugin,PluginSettingTab,Setting,Platform:{isDesktopApp:true},Notice:class{constructor(msg){window.notices.push(msg);}}};if(id==='@electron/remote')return remote;return original.call(this,id,...args);};
-    window.reloadPlugin=async()=>{if(window.plugin)window.plugin.onunload();delete require.cache[require.resolve(pluginDir+'/main.js')];const C=require(pluginDir+'/main.js').default;window.plugin=new C();await window.plugin.onload();window.plugin.tab.display();};
+    Module._load=function(id,...args){if(id==='obsidian')return{Plugin,PluginSettingTab,Platform:{isDesktopApp:true},Notice:class{constructor(msg){window.notices.push(msg);}}};if(id==='@electron/remote')return remote;return original.call(this,id,...args);};
+    window.reloadPlugin=async()=>{if(window.plugin)window.plugin.onunload();delete require.cache[require.resolve(pluginDir+'/main.js')];const C=require(pluginDir+'/main.js').default;window.plugin=new C();await window.plugin.onload();window.plugin.tab.update();};
     await window.reloadPlugin();
     return {userData:remote.app.getPath('userData'),electron:remote.process.versions.electron,remoteApis:!!(remote.app.getLoginItemSettings&&remote.app.setLoginItemSettings&&remote.app.commandLine.hasSwitch&&remote.app.commandLine.removeSwitch),unavailable:window.plugin.unavailable,minimized:win.isMinimized()};
    }, { pluginDir, dependencies, root });
@@ -119,7 +121,7 @@ async function stop() {
     const preferenceSaved = fs.existsSync(path.join(pluginDir,'data.json')) && JSON.parse(fs.readFileSync(path.join(pluginDir,'data.json'),'utf8')).startMinimized === true;
     const approved = 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Explorer/StartupApproved/Run';
     ps(`New-Item -Path '${approved}' -Force | Out-Null; New-ItemProperty -LiteralPath '${approved}' -Name '${name}' -PropertyType Binary -Value ([byte[]](3,0,0,0,0,0,0,0,0,0,0,0)) -Force | Out-Null`);
-    const externalDisabled = await evaluate(page,()=>{window.plugin.tab.display();return {state:window.plugin.startup.read(false),toggle:window.controls['Start with Windows'].value};});
+    const externalDisabled = await evaluate(page,()=>{window.plugin.tab.update();return {state:window.plugin.startup.read(false),toggle:window.controls['Start with Windows'].value};});
     assert.deepEqual(externalDisabled,{state:{registered:true,enabled:false,minimized:true,tray:false},toggle:false});
     await evaluate(page,async()=>await window.controls['Start minimized'].change(false));
     assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read(false)),{registered:true,enabled:false,minimized:false,tray:false});

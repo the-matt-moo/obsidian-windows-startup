@@ -1,6 +1,6 @@
 {
   "name": "obsidian-windows-startup-tray",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "license": "MIT",
   "description": "Start with Windows and optionally keep each vault in the system tray. Uses fs and reg.exe (read-only) for startup detection; see README for details.",
@@ -12,7 +12,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
-    "obsidian": "^1.8.7",
+    "obsidian": "^1.13.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0"
   }

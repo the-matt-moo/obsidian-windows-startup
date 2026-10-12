@@ -1,5 +1,7 @@
 # Windows Startup and Tray
 
+Requires Obsidian **1.13.0 or newer** on Windows desktop. Settings use Obsidian's declarative API; older versions are not supported.
+
 Four Windows-only settings:
 
 - **Start with Windows:** start Obsidian when the current Windows user signs in.
@@ -11,14 +13,14 @@ The per-vault tray has **Show / Hide** and **Quit this vault** controls. New tra
 
 ## System access
 
-This plugin uses two Node.js APIs that Obsidian flags as elevated access. Both are required and neither can be replaced by the Obsidian vault API.
+This plugin uses two Node.js APIs that Obsidian flags as elevated access. Node filesystem and process permissions are broad; the usage described below is narrow, not a sandbox or permission restriction. These startup-detection operations cannot be replaced by the Obsidian vault API.
 
 | API | What it does | Why it is necessary |
 |-----|-------------|---------------------|
-| `fs.existsSync` | Checks whether Obsidian's parent launcher exists on disk (one call at plugin load). | Squirrel-installed Obsidian has a versioned `app-X.Y.Z/` directory. The plugin must verify the stable parent launcher exists before using it as the startup executable; otherwise the startup entry would break after an Obsidian update. No file is read or written. |
-| `child_process.execFileSync` | Runs `reg.exe query` to read the plugin's own startup registry value (one call per settings-tab open or refresh). | Electron's `getLoginItemSettings` omits command-line switches from its return value. The only way to know whether `--obsidian-windows-startup-minimized` or `--obsidian-windows-startup-tray` is present in the current startup command is to read the plugin's own `HKCU\...\Run` value directly. `reg.exe` is invoked with `windowsHide: true`, targets only the named value `Obsidian Windows Startup`, and no shell is involved (`execFileSync`, not `exec`). |
+| `fs.existsSync` | Checks whether Obsidian's parent launcher exists on disk (one call at plugin load). | Squirrel-installed Obsidian has a versioned `app-X.Y.Z/` directory. The plugin must verify the stable parent launcher exists before using it as the startup executable; otherwise the startup entry would break after an Obsidian update. This existence check does not read file contents or write files. |
+| `child_process.execFileSync` | Runs `reg.exe query` to read the plugin's own startup registry value when a matching startup entry exists (during state reads at load, settings rendering/search indexing, refresh, and before/after startup changes). | Electron's `getLoginItemSettings` omits command-line switches from its return value. Reading the plugin's own `HKCU\...\Run` value detects whether `--obsidian-windows-startup-minimized` or `--obsidian-windows-startup-tray` is present in the current startup command. `reg.exe` is invoked with `windowsHide: true`, targets only the named value `Obsidian Windows Startup`, and no shell is involved (`execFileSync`, not `exec`). |
 
-The plugin does not read, write, or enumerate any file or registry value beyond these two scoped operations. All four settings are written through Electron's `app.setLoginItemSettings` API, not through direct registry writes. Source is fully auditable and the release build reproduces byte-for-byte from the repository.
+Startup registration and its minimized/tray command-line flags are written through Electron's `app.setLoginItemSettings`, not direct registry writes. The three preferences (`startMinimized`, `startInTray`, `closeToTray`) are loaded and saved through Obsidian's vault-scoped `loadData`/`saveData` API in the plugin's `data.json`. Close-to-tray is not a login-item setting. Tray icons use Electron's native image APIs. These operations do not require reading note contents or managing unrelated startup entries. Source is available for inspection; `npm run build` produces the bundle.
 
 ## Build
 
@@ -35,7 +37,7 @@ npm test
 ## Install locally
 
 1. Build the plugin.
-2. Create `<vault>/.obsidian/plugins/windows-startup/`.
+2. Create `<vault>/.obsidian/plugins/windows-startup-tray/`.
 3. Copy **`manifest.json` and `main.js`** into that directory. No CSS file is needed.
 4. In Obsidian, allow community plugins and enable **Windows Startup and Tray**.
 5. Open **Settings → Windows Startup and Tray** and choose the four toggles.
@@ -74,7 +76,7 @@ Windows Task Manager can disable the entry using:
 HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
 ```
 
-The settings tab reads `getLoginItemSettings().launchItems`, including each entry's `enabled` status. Electron omits command-line switches from `launchItems[].args`, so minimized and tray flags are read from this plugin's Run value with Windows' built-in `reg.exe` (no shell execution). It does not rely on Electron's default `openAtLogin` name. Reopening the tab or pressing **Refresh** rereads Windows state. Preference changes preserve a Windows-disabled entry rather than silently re-enabling it.
+The settings tab reads `getLoginItemSettings().launchItems`, including each entry's `enabled` status. Electron omits command-line switches from `launchItems[].args`, so minimized and tray flags are read from this plugin's Run value with Windows' built-in `reg.exe` (no shell execution). It does not rely on Electron's default `openAtLogin` name. State is read on plugin load, when settings definitions are evaluated (including search indexing), on **Refresh**, and before/after startup changes. A registry query occurs for each state read only when a matching entry exists. Preference changes preserve a Windows-disabled entry rather than silently re-enabling it.
 
 On a marked launch, the plugin creates the tray first, then hides after layout readiness. If tray creation fails, it never hides and falls back to marked taskbar minimization when enabled. Main-process switches are consumed so reloads and other vaults cannot repeat the one-time action.
 
@@ -101,7 +103,7 @@ First disable other Obsidian autostart entries to avoid duplicate launches; this
 9. Disable the entry through **Task Manager → Startup apps**. Reopen plugin settings or press **Refresh**; **Start with Windows** must show off. Changing either startup behavior must leave it off. Turning **Start with Windows** on must re-enable it.
 10. Turn **Start with Windows** off. The registry query must report the value is missing. The plugin's matching `StartupApproved` value is also removed by Electron. Unrelated startup values must remain unchanged.
 
-The automated suite covers registry arguments/state, one-time startup priority, tray failure safety, close interception, quit/session-end bypass, multi-window restoration, canceled Quit, and late async tray creation. Native Electron harnesses are documented in `VERIFICATION.md`.
+The automated suite covers registry arguments/state, declarative settings persistence and errors, Electron bridge fallback, one-time startup priority, tray failure safety, close interception, quit/session-end bypass, multi-window restoration, canceled Quit, and late async tray creation. Native Electron harnesses are documented in `VERIFICATION.md`.
 
 ## Limits and removal
 
