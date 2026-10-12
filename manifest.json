@@ -1,7 +1,7 @@
 {
   "id": "windows-startup-tray",
-  "name": "Windows Startup & Tray",
-  "version": "0.2.0",
+  "name": "Windows Startup and Tray",
+  "version": "0.2.1",
   "minAppVersion": "1.8.7",
   "description": "Start Obsidian with Windows and optionally keep each vault in the system tray.",
   "author": "the-matt-moo",
