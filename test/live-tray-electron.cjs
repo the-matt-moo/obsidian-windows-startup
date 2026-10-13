@@ -17,7 +17,7 @@ const pluginDir = path.join(root, 'vault/.obsidian/plugins/windows-startup');
 fs.mkdirSync(pluginDir, { recursive: true });
 fs.copyFileSync(path.join(repo, 'main.js'), path.join(pluginDir, 'main.js'));
 fs.copyFileSync(path.join(repo, 'manifest.json'), path.join(pluginDir, 'manifest.json'));
-fs.writeFileSync(path.join(pluginDir, 'data.json'), JSON.stringify({ startMinimized: true, startInTray: true, closeToTray: true }));
+fs.writeFileSync(path.join(pluginDir, 'data.json'), JSON.stringify({ startMinimized: true, startInTray: true, closeToTray: true, delaySeconds: 0, defaultVault: '' }));
 fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'disposable-tray-test', main: 'harness.cjs' }));
 fs.writeFileSync(path.join(root, 'harness.cjs'), `
 const {app,BrowserWindow}=require('electron');

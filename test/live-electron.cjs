@@ -93,7 +93,7 @@ async function stop() {
     const dataFile=pluginDir+'/data.json';
     class Plugin { constructor(){this.app={vault:{getName:()=> 'Disposable Vault'},workspace:{onLayoutReady:fn=>fn(),on:()=>({})}};} async loadData(){return fs.existsSync(dataFile)?JSON.parse(fs.readFileSync(dataFile,'utf8')):null;} async saveData(data){fs.writeFileSync(dataFile,JSON.stringify(data));} addSettingTab(tab){this.tab=tab;} registerEvent(){} }
     class PluginSettingTab {
-     update(){window.controls={};for(const item of this.getSettingDefinitions())if(item.control?.type==='toggle')window.controls[item.name]={value:this.getControlValue(item.control.key),change:value=>this.setControlValue(item.control.key,value)};}
+     update(){window.controls={};for(const item of this.getSettingDefinitions())if(item.control)window.controls[item.name]={value:this.getControlValue(item.control.key),change:value=>this.setControlValue(item.control.key,value)};}
      refreshDomState(){}
     }
     window.notices=[];
@@ -107,32 +107,32 @@ async function stop() {
    assert.equal(info.remoteApis, true);assert.equal(info.unavailable, '');assert.equal(info.minimized, expected);
    outputs.push({launch:label,...info});
    if(label==='normal') {
-    const initial=await evaluate(page,()=>window.plugin.startup.read(false));
-    assert.deepEqual(initial,{registered:false,enabled:false,minimized:false,tray:false});
+    const initial=await evaluate(page,()=>window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''}));
+    assert.deepEqual(initial,{registered:false,enabled:false,minimized:false,tray:false,delaySeconds:0,defaultVault:''});
     await evaluate(page,()=>window.controls['Start with Windows'].change(true));
-    const enabled=await evaluate(page,()=>window.plugin.startup.read(false));
-    assert.deepEqual(enabled,{registered:true,enabled:true,minimized:false,tray:false});
+    const enabled=await evaluate(page,()=>window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''}));
+    assert.deepEqual(enabled,{registered:true,enabled:true,minimized:false,tray:false,delaySeconds:0,defaultVault:''});
     assert(registry().includes('--obsidian-windows-startup'));
     await evaluate(page,async()=>await window.controls['Start minimized'].change(true));
-    const minimized=await evaluate(page,()=>window.plugin.startup.read(false));
+    const minimized=await evaluate(page,()=>window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''}));
     outputs.push({minimizedToggleDiagnostic:minimized,notices:await evaluate(page,()=>window.notices),namedRegistryCommand:registry(),launchItems:await evaluate(page,()=>window.testRemote.app.getLoginItemSettings({path:window.plugin.startup.path,args:['--obsidian-windows-startup']}).launchItems.filter(i=>i.name==='Obsidian Windows Startup'))});
     const minimizedPass = minimized.registered && minimized.enabled && minimized.minimized;
     assert(registry().includes('--obsidian-windows-startup-minimized'));
     const preferenceSaved = fs.existsSync(path.join(pluginDir,'data.json')) && JSON.parse(fs.readFileSync(path.join(pluginDir,'data.json'),'utf8')).startMinimized === true;
     const approved = 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Explorer/StartupApproved/Run';
     ps(`New-Item -Path '${approved}' -Force | Out-Null; New-ItemProperty -LiteralPath '${approved}' -Name '${name}' -PropertyType Binary -Value ([byte[]](3,0,0,0,0,0,0,0,0,0,0,0)) -Force | Out-Null`);
-    const externalDisabled = await evaluate(page,()=>{window.plugin.tab.update();return {state:window.plugin.startup.read(false),toggle:window.controls['Start with Windows'].value};});
-    assert.deepEqual(externalDisabled,{state:{registered:true,enabled:false,minimized:true,tray:false},toggle:false});
+    const externalDisabled = await evaluate(page,()=>{window.plugin.tab.update();return {state:window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''}),toggle:window.controls['Start with Windows'].value};});
+    assert.deepEqual(externalDisabled,{state:{registered:true,enabled:false,minimized:true,tray:false,delaySeconds:0,defaultVault:''},toggle:false});
     await evaluate(page,async()=>await window.controls['Start minimized'].change(false));
-    assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read(false)),{registered:true,enabled:false,minimized:false,tray:false});
+    assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''})),{registered:true,enabled:false,minimized:false,tray:false,delaySeconds:0,defaultVault:''});
     await evaluate(page,async()=>await window.controls['Start minimized'].change(true));
-    assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read(false)),{registered:true,enabled:false,minimized:true,tray:false});
+    assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''})),{registered:true,enabled:false,minimized:true,tray:false,delaySeconds:0,defaultVault:''});
     await evaluate(page,()=>window.controls['Start with Windows'].change(true));
-    assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read(false)),{registered:true,enabled:true,minimized:true,tray:false});
+    assert.deepEqual(await evaluate(page,()=>window.plugin.startup.read({minimized:false,tray:false,delaySeconds:0,defaultVault:''})),{registered:true,enabled:true,minimized:true,tray:false,delaySeconds:0,defaultVault:''});
     assert.deepEqual(await evaluate(page,()=>window.notices),[]);
     outputs.push({nativeExternalDisabled:'PASS',disabledStatusShownInToggle:'PASS',minimizedChangePreservesDisabled:'PASS',reenable:'PASS'});
     await evaluate(page,()=>window.controls['Start with Windows'].change(false));
-    const disabled=await evaluate(page,()=>window.plugin.startup.read(true));
+    const disabled=await evaluate(page,()=>window.plugin.startup.read({minimized:true,tray:false,delaySeconds:0,defaultVault:''}));
     assert.equal(disabled.registered,false);assert.equal(disabled.enabled,false);assert.equal(registry(),null);
     outputs.push({toggles:minimizedPass?'PASS':'FAIL: minimized readback',initial,enabled,minimized,disabled,registryWriteReadRemove:'PASS',preferenceSaved:preferenceSaved?'PASS':'FAIL'});
     if (!minimizedPass || !preferenceSaved) process.exitCode=1;

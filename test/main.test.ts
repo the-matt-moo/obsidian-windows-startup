@@ -22,7 +22,7 @@ interface SettingsTab {
   refreshes: number;
 }
 
-async function fixture(bridge: 'modern' | 'throws' | 'missing' | 'unavailable' = 'modern') {
+async function fixture(bridge: 'modern' | 'throws' | 'missing' | 'unavailable' = 'modern', data: unknown = null) {
   const notices: string[] = [];
   const saved: unknown[] = [];
   const loaded: string[] = [];
@@ -47,7 +47,7 @@ async function fixture(bridge: 'modern' | 'throws' | 'missing' | 'unavailable' =
   };
   class Plugin {
     app = { vault: { getName: () => 'Test' }, workspace: { on: () => ({}), onLayoutReady() {} } };
-    async loadData() { return null; }
+    async loadData() { return data; }
     async saveData(data: unknown) { saved.push(JSON.parse(JSON.stringify(data))); }
     addSettingTab(tab: SettingsTab) { Object.assign(this, { tab }); }
     registerEvent() {}
@@ -92,7 +92,7 @@ test('unavailable bridges disable controls and display an explanation', async ()
   assert.match(f.plugin.unavailable, /does not expose the Electron APIs/);
   assert.equal(f.plugin.startup, undefined);
   const controls = f.tab.getSettingDefinitions().filter(item => 'control' in item);
-  assert.equal(controls.length, 4);
+  assert.equal(controls.length, 6);
   for (const item of controls) {
     assert.ok('control' in item && item.control);
     assert.equal(typeof item.control.disabled === 'function' && item.control.disabled(), true);
@@ -101,12 +101,12 @@ test('unavailable bridges disable controls and display an explanation', async ()
 
 test('declarative settings persist preferences separately and preserve Windows-disabled state', async () => {
   const f = await fixture();
-  let state: StartupState = { registered: true, enabled: false, minimized: false, tray: false };
+  let state: StartupState = { registered: true, enabled: false, minimized: false, tray: false, delaySeconds: 0, defaultVault: '' };
   const writes: StartupState[] = [];
   let reads = 0;
-  f.plugin.startup!.read = () => { reads++; return { ...state }; };
-  f.plugin.startup!.write = (registered, enabled, minimized, tray = false) => {
-    state = { registered, enabled, minimized, tray };
+  f.plugin.startup!.read = preferences => { reads++; return state.registered ? { ...state } : { ...state, ...preferences }; };
+  f.plugin.startup!.write = (registered, enabled, preferences) => {
+    state = { registered, enabled, ...preferences };
     writes.push({ ...state });
     return state;
   };
@@ -121,20 +121,58 @@ test('declarative settings persist preferences separately and preserve Windows-d
   assert.ok(writes.every(write => write.registered && !write.enabled));
   await f.tab.setControlValue('closeToTray', true);
   assert.equal(writes.length, 2, 'close-to-tray must not write login settings');
-  assert.deepEqual(f.saved.at(-1), { startMinimized: true, startInTray: true, closeToTray: true });
+  assert.deepEqual(f.saved.at(-1), { startMinimized: true, startInTray: true, closeToTray: true, delaySeconds: 0, defaultVault: '' });
   assert.equal(trayRefreshes, 2);
   assert.equal(f.tab.getControlValue('startMinimized'), true);
   assert.equal(f.tab.getControlValue('startInTray'), true);
   assert.equal(f.tab.getControlValue('closeToTray'), true);
   await f.tab.setControlValue('startWithWindows', true);
-  assert.deepEqual(writes.at(-1), { registered: true, enabled: true, minimized: true, tray: true });
+  assert.deepEqual(writes.at(-1), { registered: true, enabled: true, minimized: true, tray: true, delaySeconds: 0, defaultVault: '' });
   assert.equal(f.saved.length, 3, 'login toggle must not save vault preferences');
   await f.tab.setControlValue('startWithWindows', false);
-  assert.deepEqual(writes.at(-1), { registered: false, enabled: false, minimized: true, tray: true });
-  assert.equal(f.tab.updates, 5);
-  assert.equal(f.tab.refreshes, 5);
+  assert.deepEqual(writes.at(-1), { registered: false, enabled: false, minimized: true, tray: true, delaySeconds: 0, defaultVault: '' });
+  await f.tab.setControlValue('delaySeconds', 15);
+  await f.tab.setControlValue('defaultVault', 'my vault');
+  assert.equal(f.tab.getControlValue('delaySeconds'), 15);
+  assert.equal(f.tab.getControlValue('defaultVault'), 'my vault');
+  assert.deepEqual(f.saved.at(-1), { startMinimized: true, startInTray: true, closeToTray: true, delaySeconds: 15, defaultVault: 'my vault' });
+  assert.equal(f.tab.updates, 7);
+  assert.equal(f.tab.refreshes, 7);
   assert.ok(reads > 5, 'definitions and changes must reread Windows state');
   assert.deepEqual(f.notices, []);
+});
+
+test('legacy, missing, and invalid saved startup settings retain safe defaults', async () => {
+  for (const data of [null, {}, { startMinimized: true }, { delaySeconds: -1, defaultVault: 123 }, { delaySeconds: 1.5 }, { delaySeconds: '250' }, { delaySeconds: Infinity }, { defaultVault: '   ' }]) {
+    const f = await fixture('modern', data);
+    assert.equal(f.plugin.delaySeconds, 0);
+    assert.equal(f.plugin.defaultVault, '');
+    assert.equal(f.plugin.unavailable, '');
+  }
+  const fLegacy = await fixture('modern', { delayMs: 5000, defaultVault: ' Moo ' });
+  assert.equal(fLegacy.plugin.delaySeconds, 5);
+  assert.equal(fLegacy.plugin.defaultVault, 'Moo');
+
+  const f = await fixture('modern', { delaySeconds: 12, defaultVault: ' Moo ' });
+  assert.equal(f.plugin.delaySeconds, 12);
+  assert.equal(f.plugin.defaultVault, 'Moo');
+});
+
+test('editing delay and vault preserves registered Windows-disabled startup state', async () => {
+  const f = await fixture();
+  let state: StartupState = { registered: true, enabled: false, minimized: true, tray: true, delaySeconds: 5, defaultVault: 'old' };
+  f.plugin.startup!.read = () => ({ ...state });
+  f.plugin.startup!.write = (registered, enabled, preferences) => (state = { registered, enabled, ...preferences });
+  f.tab.getSettingDefinitions();
+  assert.equal(f.tab.getControlValue('delaySeconds'), 5);
+  assert.equal(f.tab.getControlValue('defaultVault'), 'old');
+  await f.tab.setControlValue('delaySeconds', 30);
+  await f.tab.setControlValue('defaultVault', ' Moo ');
+  assert.deepEqual(state, { registered: true, enabled: false, minimized: true, tray: true, delaySeconds: 30, defaultVault: 'Moo' });
+  await f.tab.setControlValue('delaySeconds', -1);
+  assert.equal(state.delaySeconds, 30);
+  await f.tab.setControlValue('defaultVault', '   ');
+  assert.equal(state.defaultVault, '');
 });
 
 test('failed preference save reports error and restores settings availability', async () => {

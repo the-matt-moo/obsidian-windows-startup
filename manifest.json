@@ -1,9 +1,9 @@
 {
   "id": "windows-startup-tray",
   "name": "Windows Startup and Tray",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "minAppVersion": "1.13.0",
-  "description": "Start with Windows and optionally keep each vault in the system tray. Uses fs and reg.exe (read-only) for startup detection; see README for details.",
+  "description": "Start with Windows, optionally after a delay or in the system tray.",
   "author": "the-matt-moo",
   "isDesktopOnly": true
 }

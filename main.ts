@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import {
   applyStartupWindow, LoginApp, STARTUP_ARG, StartupSession, StartupState,
-  StartupWindow, TRAY_ARG, WindowsStartup,
+  MAX_DELAY_SECONDS, StartupPreferences, StartupWindow, TRAY_ARG, WindowsStartup,
 } from './startup';
 import { ElectronWindowLike, TrayController, TrayRemote } from './tray';
 
@@ -17,6 +17,8 @@ interface SavedSettings {
   startMinimized: boolean;
   startInTray: boolean;
   closeToTray: boolean;
+  delaySeconds: number;
+  defaultVault: string;
 }
 
 function getRemote(): ElectronRemote {
@@ -41,6 +43,8 @@ export default class WindowsStartupPlugin extends Plugin {
   preferredMinimized = false;
   preferredStartInTray = false;
   closeToTray = false;
+  delaySeconds = 0;
+  defaultVault = '';
   unavailable = '';
   private active = false;
 
@@ -48,9 +52,18 @@ export default class WindowsStartupPlugin extends Plugin {
     this.active = true;
     const saved: unknown = await this.loadData();
     if (saved && typeof saved === 'object') {
-      this.preferredMinimized = 'startMinimized' in saved && saved.startMinimized === true;
-      this.preferredStartInTray = 'startInTray' in saved && saved.startInTray === true;
-      this.closeToTray = 'closeToTray' in saved && saved.closeToTray === true;
+      const data = saved as Partial<SavedSettings> & { delayMs?: unknown };
+      this.preferredMinimized = data.startMinimized === true;
+      this.preferredStartInTray = data.startInTray === true;
+      this.closeToTray = data.closeToTray === true;
+      if (Number.isInteger(data.delaySeconds) && (data.delaySeconds as number) >= 0 && (data.delaySeconds as number) <= MAX_DELAY_SECONDS) {
+        this.delaySeconds = data.delaySeconds as number;
+      } else if (Number.isInteger(data.delayMs) && (data.delayMs as number) >= 0) {
+        this.delaySeconds = Math.min(Math.round((data.delayMs as number) / 1000), MAX_DELAY_SECONDS);
+      } else {
+        this.delaySeconds = 0;
+      }
+      this.defaultVault = typeof data.defaultVault === 'string' ? data.defaultVault.trim() : '';
     }
     if (Platform.isDesktopApp && process.platform === 'win32') {
       try {
@@ -61,7 +74,7 @@ export default class WindowsStartupPlugin extends Plugin {
           ? resolve(directory, '..', basename(executable)) : executable;
         const startupExecutable = existsSync(stub) ? stub : executable;
         this.startup = new WindowsStartup(remote.app, startupExecutable);
-        this.startup.read(this.preferredMinimized, this.preferredStartInTray);
+        this.startup.read(this.startupPreferences());
         const win = remote.getCurrentWindow();
         this.tray = new TrayController(remote, win, window, executable,
           () => this.app.vault.getName(), () => this.existingSecondaryWindows(), error => this.report(error));
@@ -100,12 +113,18 @@ export default class WindowsStartupPlugin extends Plugin {
       startMinimized: this.preferredMinimized,
       startInTray: this.preferredStartInTray,
       closeToTray: this.closeToTray,
+      delaySeconds: this.delaySeconds,
+      defaultVault: this.defaultVault,
     };
     await this.saveData(settings);
   }
 
   async refreshTray(): Promise<void> {
     await this.tray?.configure(this.closeToTray, this.closeToTray || this.preferredStartInTray);
+  }
+
+  startupPreferences(): StartupPreferences {
+    return { minimized: this.preferredMinimized, tray: this.preferredStartInTray, delaySeconds: this.delaySeconds, defaultVault: this.defaultVault };
   }
 
   report(error: unknown): void {
@@ -136,7 +155,7 @@ class WindowsStartupSettings extends PluginSettingTab {
   private readState(): void {
     this.stateError = this.plugin.unavailable;
     this.cachedState = undefined;
-    try { this.cachedState = this.plugin.startup?.read(this.plugin.preferredMinimized, this.plugin.preferredStartInTray); }
+    try { this.cachedState = this.plugin.startup?.read(this.plugin.startupPreferences()); }
     catch (cause) { this.stateError = cause instanceof Error ? cause.message : String(cause); }
   }
 
@@ -147,7 +166,7 @@ class WindowsStartupSettings extends PluginSettingTab {
         name: '',
         render: (setting: Setting) => {
           setting.settingEl.empty();
-          setting.settingEl.createEl('p', { text: 'Startup applies to this Windows user and opens Obsidian\u2019s last-used vault. Tray behavior belongs to this vault. Other startup entries are not managed. Startup detection uses fs to check the launcher path and reg.exe to read only this plugin’s startup value. Preferences are saved in this vault.' });
+          setting.settingEl.createEl('p', { text: 'Startup applies to this Windows user. Delay and default vault belong to this vault; leave vault blank to use Obsidian’s normal startup behavior. Other startup entries are not managed. Startup detection uses fs to check the launcher path and reg.exe to read only this plugin’s startup value. Preferences are saved in this vault.' });
           if (this.stateError) setting.settingEl.createEl('p', { text: this.stateError });
         },
       },
@@ -167,6 +186,16 @@ class WindowsStartupSettings extends PluginSettingTab {
         control: { type: 'toggle', key: 'startInTray', disabled: () => !this.cachedState || !this.plugin.tray || this.saving },
       },
       {
+        name: 'Startup delay (seconds)',
+        desc: 'Wait before Obsidian starts at Windows sign-in. 0 starts directly.',
+        control: { type: 'number', key: 'delaySeconds', min: 0, max: MAX_DELAY_SECONDS, step: 1, validate: value => Number.isInteger(value) && value >= 0 && value <= MAX_DELAY_SECONDS ? undefined : `Use a whole number from 0 to ${MAX_DELAY_SECONDS} seconds.`, disabled: () => !this.cachedState || this.saving },
+      },
+      {
+        name: 'Default vault',
+        desc: 'Vault name or ID to open after Windows startup. Leave blank for Obsidian’s normal startup behavior.',
+        control: { type: 'text', key: 'defaultVault', placeholder: 'Vault name or ID', disabled: () => !this.cachedState || this.saving },
+      },
+      {
         name: 'Close to tray',
         desc: 'Keep this vault running when its main window is closed. Its tray menu can show/hide it or really close this vault.',
         control: { type: 'toggle', key: 'closeToTray', disabled: () => !this.plugin.tray || this.saving },
@@ -184,6 +213,8 @@ class WindowsStartupSettings extends PluginSettingTab {
       case 'startWithWindows': return this.cachedState?.enabled ?? false;
       case 'startMinimized': return this.cachedState?.minimized ?? this.plugin.preferredMinimized;
       case 'startInTray': return this.cachedState?.tray ?? this.plugin.preferredStartInTray;
+      case 'delaySeconds': return this.cachedState?.delaySeconds ?? this.plugin.delaySeconds;
+      case 'defaultVault': return this.cachedState?.defaultVault ?? this.plugin.defaultVault;
       case 'closeToTray': return this.plugin.closeToTray;
       default: return undefined;
     }
@@ -198,25 +229,42 @@ class WindowsStartupSettings extends PluginSettingTab {
       switch (key) {
         case 'startWithWindows': {
           if (!plugin.startup || !this.cachedState) return;
-          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
-          plugin.startup.write(enabled, enabled, current.minimized, current.tray);
+          const current = plugin.startup.read(plugin.startupPreferences());
+          plugin.startup.write(enabled, enabled, { minimized: current.minimized, tray: current.tray, delaySeconds: current.delaySeconds, defaultVault: current.defaultVault });
           break;
         }
         case 'startMinimized': {
           if (!plugin.startup || !this.cachedState) return;
-          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
-          plugin.startup.write(current.registered, current.enabled, enabled, current.tray);
+          const current = plugin.startup.read(plugin.startupPreferences());
+          plugin.startup.write(current.registered, current.enabled, { minimized: enabled, tray: current.tray, delaySeconds: current.delaySeconds, defaultVault: current.defaultVault });
           plugin.preferredMinimized = enabled;
           await plugin.savePreferences();
           break;
         }
         case 'startInTray': {
           if (!plugin.startup || !this.cachedState) return;
-          const current = plugin.startup.read(plugin.preferredMinimized, plugin.preferredStartInTray);
-          plugin.startup.write(current.registered, current.enabled, current.minimized, enabled);
+          const current = plugin.startup.read(plugin.startupPreferences());
+          plugin.startup.write(current.registered, current.enabled, { minimized: current.minimized, tray: enabled, delaySeconds: current.delaySeconds, defaultVault: current.defaultVault });
           plugin.preferredStartInTray = enabled;
           await plugin.savePreferences();
           await plugin.refreshTray();
+          break;
+        }
+        case 'delaySeconds': {
+          if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > MAX_DELAY_SECONDS) return;
+          const current = plugin.startup?.read(plugin.startupPreferences());
+          if (current?.registered) plugin.startup?.write(current.registered, current.enabled, { minimized: current.minimized, tray: current.tray, delaySeconds: value, defaultVault: current.defaultVault });
+          plugin.delaySeconds = value;
+          await plugin.savePreferences();
+          break;
+        }
+        case 'defaultVault': {
+          if (typeof value !== 'string') return;
+          const defaultVault = value.trim();
+          const current = plugin.startup?.read(plugin.startupPreferences());
+          if (current?.registered) plugin.startup?.write(current.registered, current.enabled, { minimized: current.minimized, tray: current.tray, delaySeconds: current.delaySeconds, defaultVault });
+          plugin.defaultVault = defaultVault;
+          await plugin.savePreferences();
           break;
         }
         case 'closeToTray': {
