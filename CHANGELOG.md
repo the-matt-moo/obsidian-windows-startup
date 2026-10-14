@@ -6,6 +6,7 @@
 
 - Added configurable startup delays using a hidden Windows Script Host launcher.
 - Added optional startup targeting by vault name or ID.
+- Added GitHub Actions artifact attestations for release assets.
 
 ### Fixed
 
