@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -35,6 +37,13 @@ jobs:
         run: |
           test -f main.js || (echo "main.js missing" && exit 1)
           test -f manifest.json || (echo "manifest.json missing" && exit 1)
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
